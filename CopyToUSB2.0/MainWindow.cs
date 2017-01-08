@@ -5,6 +5,7 @@ using System.Data;
 using System.Drawing;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
@@ -30,17 +31,21 @@ namespace CopyToUSB2._0
         private const int DBT_DEVICEARRIVAL = 0x8000;
         private const int DBT_DEVICEREMOVECOMPLETE = 0x8004;
         private const int DBT_DEVTYP_VOLUME = 0x00000002;
-        private bool Flag = false;
+        private bool DeviceFlag = false;
+
+        private string srcPath = "";
         private string driveLetter = "";
         private string baseFolder = "";
-        private Timer tmr = new Timer();
+
         private int sortColumn = 0;
 
+        private CancellationTokenSource cts;
+        
         public MainWindow()
         {
             InitializeComponent();
         }
-
+        
         private void settingsToolStripMenuItem_Click(object sender, EventArgs e)
         {
             Settings form2 = new Settings();
@@ -75,6 +80,94 @@ namespace CopyToUSB2._0
             WindowState = FormWindowState.Normal;
         }
 
+        private void listView1_ColumnClick(object sender, ColumnClickEventArgs e)
+        {
+            // Determine whether the column is the same as the last column clicked.
+            if (e.Column != sortColumn)
+            {
+                // Set the sort column to the new column.
+                sortColumn = e.Column;
+                // Set the sort order to ascending by default.
+                listView1.Sorting = SortOrder.Ascending;
+            }
+            else
+            {
+                // Determine what the last sort order was and change it.
+                if (listView1.Sorting == SortOrder.Ascending)
+                    listView1.Sorting = SortOrder.Descending;
+                else
+                    listView1.Sorting = SortOrder.Ascending;
+            }
+            // Call the sort method to manually sort.
+            listView1.BeginUpdate();
+            listView1.Sort();
+            listView1.EndUpdate();
+            // Set the ListViewItemSorter property to a new ListViewItemComparer object.
+            this.listView1.ListViewItemSorter = new ListViewItemComparer(e.Column, listView1.Sorting);
+            listView1.Refresh();
+        }
+
+        private void button_Click(object sender, EventArgs e)
+        {
+            cts = new CancellationTokenSource();
+            int totalSelected = listView1.SelectedItems.Count;
+            if (button.Enabled == true && button.Text == "Copy" && totalSelected>0)
+            {
+                button.Enabled = false;
+                double totalSize = Library.getTotalSizeOfSelectedItems(listView1.SelectedItems.Cast<ListViewItem>().ToList());
+                double curSize = 0;
+                CancellationToken token = cts.Token;
+                progressBar1.Value = 0;
+                int taskIndex = 0;
+                List<Task<double>> tasks = new List<Task<double>>();
+                label1.Text = " > Initiallizing Copying process... Please wait ";
+                foreach (ListViewItem l in listView1.SelectedItems)
+                {
+                    tasks.Add(Task<double>.Factory.StartNew(() => {
+                        Interlocked.Increment(ref taskIndex);
+                        return Library.CopyFromTheLink(l, baseFolder, driveLetter);
+                    }, token));
+
+                    label1.Text = " > Copying file " + taskIndex.ToString() + " Out of " + totalSelected.ToString();
+
+                    tasks[tasks.Count - 1].ContinueWith((t) => {
+                        if (!token.IsCancellationRequested)
+                        {
+                            curSize += t.Result;
+                            int per = (int)(curSize / totalSize * 100);
+                            progressBar1.Value = per;
+                            listView1.Items.Remove(l);
+                            label1.Text = " > " + taskIndex.ToString() + " files copied out of " + totalSelected.ToString();
+                            if (taskIndex == totalSelected)
+                            {
+                                cts.Dispose();
+                                button.Text = "Copy";
+                                if (listView1.Items.Count > 0)
+                                {
+                                    label1.Text = " > Please Select the files to be copied into the USB drive...";
+                                    button.Enabled = true;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            progressBar1.Value = 0;
+                            label1.Text = " > Copying of files was cancelled";
+                            button.Text = "Copy";
+                            button.Enabled = true;
+                        }
+                    }, TaskScheduler.FromCurrentSynchronizationContext());
+                }
+                button.Text = "Cancel";
+                button.Enabled = true;
+            }
+            else if (button.Text=="Cancel")
+            {
+                button.Enabled = false;
+                cts.Cancel();
+            }
+        }
+
         protected override void WndProc(ref Message m)
         {
             base.WndProc(ref m);
@@ -96,13 +189,13 @@ namespace CopyToUSB2._0
                                 driveLetter = (char)('A' + str) + ":\\"; //initiallise class variable
 
                                 DriveInfo[] allDrives = DriveInfo.GetDrives();
-                                string srcPath = Properties.Settings.Default["srcPath"].ToString();
-                                string usbLabel = Properties.Settings.Default["usbLabel"].ToString();
+                                string src = Properties.Settings.Default["srcPath"].ToString().Trim();
+                                string usbLabel = Properties.Settings.Default["usbLabel"].ToString().Trim();
                                 foreach (DriveInfo d in allDrives)
                                 {
                                     if (d.Name == driveLetter)
                                     {
-                                        if(d.VolumeLabel == usbLabel || (d.VolumeLabel == "" && usbLabel == "Removable Disk") )
+                                        if (d.VolumeLabel == usbLabel || (d.VolumeLabel == "" && usbLabel == "Removable Disk"))
                                         {
                                             if (ShowInTaskbar == false)
                                             {
@@ -112,37 +205,28 @@ namespace CopyToUSB2._0
                                                 TopMost = true;
                                                 TopMost = false;
                                             }
-                                            Flag = true;
+                                            DeviceFlag = true;
                                             label1.Text = " > Found a new USB Flash Drive with the required label ...";
-                                            if (Directory.Exists(srcPath))
+                                            if (Directory.Exists(src))
                                             {
-                                                char lastChar = srcPath.ElementAt(srcPath.Length - 1);
-                                                srcPath = (lastChar == '\\') ? srcPath.Substring(0, srcPath.Length - 1) : srcPath;
-                                                baseFolder = srcPath.Substring(srcPath.LastIndexOf("\\") + 1); // initiallise class variable.
-                                                Task<List<ListViewItem>> t = Task<List<ListViewItem>>.Factory.StartNew( () => listAllDifferences(srcPath) );
-                                                tmr.Interval = 500;
-                                                tmr.Tick += new EventHandler(delegate (object s, EventArgs ev){
-                                                    //Console.WriteLine("Background Task Status: {0}, completed: {1}", t.Status, t.IsCompleted);
-                                                    if (t.IsCompleted)
-                                                    {
-                                                        //Console.WriteLine("Background Task completed...");
-                                                        tmr.Stop();
-                                                        ListViewItem[] arr = t.Result.ToArray();
-                                                        listView1.BeginUpdate();
-                                                        listView1.Items.AddRange(arr);
-                                                        listView1.EndUpdate();
-                                                        label1.Text = " > Please Select the files to be copied into the USB drive...";
-                                                        t.Dispose();
-                                                    }else
-                                                    {
-                                                        label1.Text = " > Populating the difference in contents of the directory ...";
-                                                    }
-                                                });
-                                                tmr.Start();
+                                                srcPath = Path.GetFullPath(src);
+                                                baseFolder = srcPath.Replace(Path.GetPathRoot(srcPath), ""); // initiallise class variable.
+                                                //Console.WriteLine(srcPath + " ~~~~ " + baseFolder);
+                                                Task<List<ListViewItem>> task = Task<List<ListViewItem>>.Factory.StartNew(() => { return Library.listAllDifferences(srcPath, baseFolder, driveLetter); });
+                                                label1.Text = " > Populating the differences b/w source and destination...";
+                                                task.ContinueWith((t) => {
+                                                    listView1.BeginUpdate();
+                                                    listView1.Items.AddRange(t.Result.ToArray());
+                                                    listView1.EndUpdate();
+                                                    label1.Text = " > Please Select the files to be copied into the USB drive...";
+                                                    button.Text = "Copy";
+                                                    button.Enabled = true;
+                                                }, TaskScheduler.FromCurrentSynchronizationContext());
                                             }
                                             else
                                             {
                                                 MessageBox.Show("The Specified Source Folder Does Not Exists !!!");
+                                                break;
                                             }
                                         }
                                         break;
@@ -151,112 +235,20 @@ namespace CopyToUSB2._0
                             }
                             break;
                         case DBT_DEVICEREMOVECOMPLETE:
-                            if (Flag == true)
+                            if (DeviceFlag == true)
                             {
                                 label1.Text = " > The Device has been removed";
                                 listView1.Items.Clear();
-                                Flag = false;
-                            }                            
+                                progressBar1.Value = 0;
+                                button.Enabled = false;
+                                button.Text = "Copy";
+                                DeviceFlag = false;
+                            }
                             break;
                     }
                     break;
             }
 
-        }
-
-        private void listView1_ColumnClick(object sender, ColumnClickEventArgs e)
-        {
-            // Determine whether the column is the same as the last column clicked.
-            if (e.Column != sortColumn)
-            {
-                // Set the sort column to the new column.
-                sortColumn = e.Column;
-                // Set the sort order to ascending by default.
-                listView1.Sorting = SortOrder.Ascending;
-            }
-            else
-            {
-                // Determine what the last sort order was and change it.
-                if (listView1.Sorting == SortOrder.Ascending)
-                    listView1.Sorting = SortOrder.Descending;
-                else
-                    listView1.Sorting = SortOrder.Ascending;
-            }
-            // Set the ListViewItemSorter property to a new ListViewItemComparer object.
-            this.listView1.ListViewItemSorter = new ListViewItemComparer(e.Column, listView1.Sorting);
-            // Call the sort method to manually sort.
-            listView1.BeginUpdate();
-            listView1.Sort();
-            listView1.EndUpdate();
-        }
-
-        private void updateProgressBar(Task<List<ListViewItem>> t)
-        {
-
-        }    
-
-        private List<ListViewItem> listAllDifferences(string subDir)
-        {
-            List<ListViewItem> list = new List<ListViewItem>();
-            try
-            {
-                DirectoryInfo directory = new DirectoryInfo(subDir);
-                FileInfo[] files = directory.GetFiles();
-                DirectoryInfo[] dirs = directory.GetDirectories();
-                foreach (FileInfo f in files)
-                {   
-                    if (! f.Attributes.HasFlag(FileAttributes.System) )
-                    {
-                        string fullPath = f.FullName;
-                        string relativePath = fullPath.Substring(subDir.IndexOf(baseFolder) + baseFolder.Length);
-                        if (Directory.Exists(driveLetter + "\\" + baseFolder))
-                        {
-                            string desPath = driveLetter + baseFolder + "\\" + relativePath;
-                            if (System.IO.File.Exists(desPath))
-                            {
-                                FileInfo fi = new FileInfo(desPath);
-                                if (f.LastWriteTime != fi.LastWriteTime) //Modified files !!!
-                                {
-                                    string[] row = { relativePath, "modified", Format.ByteSize(f.Length), f.LastWriteTime.ToString(), fi.LastWriteTime.ToString() };
-                                    var listViewItem = new ListViewItem(row);
-                                    list.Add(listViewItem);
-                                }
-                            }
-                            else
-                            {
-                                //Console.WriteLine(desPath + Directory.Exists(desPath).ToString());
-                                string[] row = { relativePath, "new file", Format.ByteSize(f.Length), f.LastWriteTime.ToString(), null };
-                                var listViewItem = new ListViewItem(row);
-                                list.Add(listViewItem);
-                            }
-                        }
-                        else
-                        {
-                            string[] row = { relativePath, "new file", Format.ByteSize(f.Length), f.LastWriteTime.ToString(), null };
-                            var listViewItem = new ListViewItem(row);
-                            list.Add(listViewItem);
-                        }                        
-                    }
-                    
-                }
-                foreach (DirectoryInfo d in dirs)
-                {
-                    if (!d.Attributes.HasFlag(FileAttributes.System))
-                    {
-                        list.AddRange(listAllDifferences(d.FullName));
-                    }
-                }
-            }
-            catch(IOException e)
-            {
-                MessageBox.Show(e.Message); 
-            }
-            return list;
-        }
-
-        private void button1_Click(object sender, EventArgs e)
-        {
-            WindowState = FormWindowState.Minimized;
         }
     }
 }

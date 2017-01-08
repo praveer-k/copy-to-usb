@@ -1,11 +1,12 @@
 ﻿using System;
+using System.Collections.Generic;
 
 namespace CopyToUSB2._0
 {
     internal class Format
     {
-        static string[] sizeSuffixes = {"B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB" };
-
+        static string[] sizeSuffixes = {" B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB" };
+        
         public static string ByteSize(long size)
         {
             const string formatTemplate = "{0}{1:0.#} {2}";
@@ -25,6 +26,13 @@ namespace CopyToUSB2._0
             return string.Format(
                 formatTemplate,
                 size < 0 ? "-" : null, normSize, sizeSuffixes[iUnit]);
+        }
+        public static double Bytes(string x)
+        {
+            double len = 0;
+            if (x.Length > 3)
+                len = Convert.ToDouble(x.Substring(0, x.Length - 3)) * Math.Pow(1024, Array.IndexOf(sizeSuffixes, x.Substring(x.Length - 2)));
+            return len;
         }
     }
 }
