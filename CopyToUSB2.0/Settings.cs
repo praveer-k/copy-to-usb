@@ -31,8 +31,8 @@ namespace CopyToUSB2._0
         {
             if (Directory.Exists(srcPath.Text))
             {
-                Properties.Settings.Default["srcPath"] = srcPath.Text;
-                Properties.Settings.Default["usbLabel"] = usbLabel.Text;
+                Properties.Settings.Default["srcPath"] = srcPath.Text.Trim();
+                Properties.Settings.Default["usbLabel"] = usbLabel.Text.Trim();
                 Properties.Settings.Default["startUp"] = startUp.Checked;
                 SetStartup(startUp.Checked);
                 Properties.Settings.Default.Save();

@@ -78,9 +78,8 @@ namespace CopyToUSB2._0
             return totalSize;
         }
 
-        public static double CopyFromTheLink(ListViewItem l, string baseFolder, string driveLetter)
+        public static double CopyFromTheLink(ListViewItem l, string srcPath, string baseFolder, string driveLetter)
         {
-            string srcPath = Properties.Settings.Default["srcPath"].ToString();
             double x = Format.Bytes(l.SubItems[2].Text);
             try
             {

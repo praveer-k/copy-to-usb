@@ -50,6 +50,8 @@ namespace CopyToUSB2._0
         {
             Settings form2 = new Settings();
             form2.ShowDialog();
+            if (srcPath != "" && srcPath != Path.GetFullPath(Properties.Settings.Default["srcPath"].ToString()))
+                Application.Restart();
         }
 
         private void aboutToolStripMenuItem_Click(object sender, EventArgs e)
@@ -101,7 +103,7 @@ namespace CopyToUSB2._0
                                 driveLetter = (char)('A' + str) + ":\\"; //initiallise class variable
 
                                 DriveInfo[] allDrives = DriveInfo.GetDrives();
-                                string src = Properties.Settings.Default["srcPath"].ToString().Trim();
+                                srcPath = Path.GetFullPath(Properties.Settings.Default["srcPath"].ToString().Trim());
                                 string usbLabel = Properties.Settings.Default["usbLabel"].ToString().Trim();
                                 foreach (DriveInfo d in allDrives)
                                 {
@@ -113,9 +115,8 @@ namespace CopyToUSB2._0
                                             {
                                                 DeviceFlag = true;
                                                 label1.Text = " > Found a new USB Flash Drive with the required label ...";
-                                                if (Directory.Exists(src))
+                                                if (Directory.Exists(srcPath))
                                                 {
-                                                    srcPath = Path.GetFullPath(src);
                                                     baseFolder = srcPath.Replace(Path.GetPathRoot(srcPath), ""); // initiallise class variable.
                                                     //Console.WriteLine(srcPath + " ~~~~ " + baseFolder);
                                                     Task<List<ListViewItem>> task = Task<List<ListViewItem>>.Factory.StartNew(() => { return Library.listAllDifferences(srcPath, baseFolder, driveLetter); });
@@ -242,7 +243,7 @@ namespace CopyToUSB2._0
                 {
                     tasks.Add(Task<double>.Factory.StartNew(() => {
                         Interlocked.Increment(ref taskIndex);
-                        return Library.CopyFromTheLink(l, baseFolder, driveLetter);
+                        return Library.CopyFromTheLink(l, srcPath, baseFolder, driveLetter);
                     }, token));
 
                     label1.Text = " > Copying file " + taskIndex.ToString() + " Out of " + totalSelected.ToString();
