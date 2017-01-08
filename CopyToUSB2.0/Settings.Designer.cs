@@ -109,9 +109,9 @@
             this.label4.AutoSize = true;
             this.label4.Location = new System.Drawing.Point(7, 137);
             this.label4.Name = "label4";
-            this.label4.Size = new System.Drawing.Size(229, 13);
+            this.label4.Size = new System.Drawing.Size(251, 13);
             this.label4.TabIndex = 7;
-            this.label4.Text = "Note: Removal Disk is generally unamed drives";
+            this.label4.Text = "Note: \"Removable Disk\" is generally unamed drives";
             // 
             // Settings
             // 

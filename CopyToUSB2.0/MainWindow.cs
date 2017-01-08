@@ -39,7 +39,7 @@ namespace CopyToUSB2._0
 
         private int sortColumn = 0;
 
-        private CancellationTokenSource cts;
+        private CancellationTokenSource cts = new CancellationTokenSource();
         
         public MainWindow()
         {
@@ -80,6 +80,119 @@ namespace CopyToUSB2._0
             WindowState = FormWindowState.Normal;
         }
 
+        protected override void WndProc(ref Message m)
+        {
+            base.WndProc(ref m);
+            switch (m.Msg)
+            {
+                case WM_DEVICECHANGE:
+                    switch ((int)m.WParam)
+                    {
+                        case DBT_DEVICEARRIVAL:
+                            int devType = Marshal.ReadInt32(m.LParam, 4);
+                            if (devType == DBT_DEVTYP_VOLUME)
+                            {
+                                DevBroadcastVolume vol;
+                                vol = (DevBroadcastVolume)Marshal.PtrToStructure(m.LParam, typeof(DevBroadcastVolume));
+                                int mask = vol.Mask;
+                                String binaryMask = Convert.ToString(vol.Mask, 2);
+                                int str = binaryMask.Length - binaryMask.IndexOf('1') - 1;
+
+                                driveLetter = (char)('A' + str) + ":\\"; //initiallise class variable
+
+                                DriveInfo[] allDrives = DriveInfo.GetDrives();
+                                string src = Properties.Settings.Default["srcPath"].ToString().Trim();
+                                string usbLabel = Properties.Settings.Default["usbLabel"].ToString().Trim();
+                                foreach (DriveInfo d in allDrives)
+                                {
+                                    if (d.Name == driveLetter)
+                                    {
+                                        try
+                                        {
+                                            if (d.VolumeLabel == usbLabel || (d.VolumeLabel == "" && usbLabel == "Removable Disk"))
+                                            {
+                                                DeviceFlag = true;
+                                                label1.Text = " > Found a new USB Flash Drive with the required label ...";
+                                                if (Directory.Exists(src))
+                                                {
+                                                    srcPath = Path.GetFullPath(src);
+                                                    baseFolder = srcPath.Replace(Path.GetPathRoot(srcPath), ""); // initiallise class variable.
+                                                    //Console.WriteLine(srcPath + " ~~~~ " + baseFolder);
+                                                    Task<List<ListViewItem>> task = Task<List<ListViewItem>>.Factory.StartNew(() => { return Library.listAllDifferences(srcPath, baseFolder, driveLetter); });
+                                                    label1.Text = " > Populating the differences b/w source and destination...";
+                                                    task.ContinueWith((t) => {
+                                                        listView1.BeginUpdate();
+                                                        listView1.Items.AddRange(t.Result.ToArray());
+                                                        listView1.EndUpdate();
+                                                        if(listView1.Items.Count>0)
+                                                            label1.Text = " > Please Select the files to be copied into the USB drive...";
+                                                        else
+                                                        {
+                                                            DirectoryInfo di = new DirectoryInfo(srcPath);
+                                                            int fileCount = 0;
+                                                            foreach (var fi in di.GetFiles())
+                                                            {
+                                                                if (!fi.Attributes.HasFlag(FileAttributes.System))
+                                                                {
+                                                                    fileCount += 1;
+                                                                    break;
+                                                                }
+                                                            }
+                                                            if (fileCount == 0)
+                                                            {
+                                                                label1.Text = " > No files in the Source Directory...";
+                                                            }
+                                                            else
+                                                            {
+                                                                label1.Text = " > No difference found between the source and destination...";
+                                                            }
+                                                        }
+                                                        button.Text = "Copy";
+                                                        button.Enabled = true;
+                                                        if (ShowInTaskbar == false)
+                                                        {
+                                                            ShowInTaskbar = true;
+                                                            notifyIcon1.Visible = false;
+                                                            WindowState = FormWindowState.Normal;
+                                                            TopMost = true;
+                                                            TopMost = false;
+                                                        }
+                                                    }, TaskScheduler.FromCurrentSynchronizationContext());
+                                                }
+                                                else
+                                                {
+                                                    MessageBox.Show("The Specified Source Folder Does Not Exists !!!");
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        catch (Exception e)
+                                        {
+                                            label1.Text = " > Device has been removed... ";
+                                            Console.WriteLine(e.Message);
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                            break;
+                        case DBT_DEVICEREMOVECOMPLETE:
+                            if (DeviceFlag == true)
+                            {
+                                label1.Text = " > The Device has been removed";
+                                listView1.Items.Clear();
+                                progressBar1.Value = 0;
+                                button.Enabled = false;
+                                button.Text = "Copy";
+                                DeviceFlag = false;
+                            }
+                            break;
+                    }
+                    break;
+            }
+
+        }
+
         private void listView1_ColumnClick(object sender, ColumnClickEventArgs e)
         {
             // Determine whether the column is the same as the last column clicked.
@@ -109,9 +222,13 @@ namespace CopyToUSB2._0
 
         private void button_Click(object sender, EventArgs e)
         {
-            cts = new CancellationTokenSource();
             int totalSelected = listView1.SelectedItems.Count;
-            if (button.Enabled == true && button.Text == "Copy" && totalSelected>0)
+            if (button.Enabled == true && button.Text == "Copy" && totalSelected == 0)
+            {
+                progressBar1.Value = 0;
+                MessageBox.Show("[ Nothing has been selected ]\nPlease Select the files to be copied into the USB drive...");
+            }
+            else if (button.Enabled == true && button.Text == "Copy" && totalSelected>0)
             {
                 button.Enabled = false;
                 double totalSize = Library.getTotalSizeOfSelectedItems(listView1.SelectedItems.Cast<ListViewItem>().ToList());
@@ -131,33 +248,20 @@ namespace CopyToUSB2._0
                     label1.Text = " > Copying file " + taskIndex.ToString() + " Out of " + totalSelected.ToString();
 
                     tasks[tasks.Count - 1].ContinueWith((t) => {
-                        if (!token.IsCancellationRequested)
+                        curSize += t.Result;
+                        int per = (int)(curSize / totalSize * 100);
+                        progressBar1.Value = per;
+                        listView1.Items.Remove(l);
+                        label1.Text = " > " + taskIndex.ToString() + " files copied out of " + totalSelected.ToString();
+                        if (taskIndex == totalSelected)
                         {
-                            curSize += t.Result;
-                            int per = (int)(curSize / totalSize * 100);
-                            progressBar1.Value = per;
-                            listView1.Items.Remove(l);
-                            label1.Text = " > " + taskIndex.ToString() + " files copied out of " + totalSelected.ToString();
-                            if (taskIndex == totalSelected)
+                            button.Text = "Copy";
+                            if (listView1.Items.Count > 0)
                             {
-                                cts.Dispose();
-                                button.Text = "Copy";
-                                if (listView1.Items.Count > 0)
-                                {
-                                    label1.Text = " > Please Select the files to be copied into the USB drive...";
-                                    button.Enabled = true;
-                                }
+                                button.Enabled = true;
                             }
                         }
-                        else
-                        {
-                            cts.Dispose();
-                            progressBar1.Value = 0;
-                            label1.Text = " > Copying of files was cancelled";
-                            button.Text = "Copy";
-                            button.Enabled = true;
-                        }
-                    }, TaskScheduler.FromCurrentSynchronizationContext());
+                    }, token, TaskContinuationOptions.NotOnCanceled, TaskScheduler.FromCurrentSynchronizationContext());
                 }
                 button.Text = "Cancel";
                 button.Enabled = true;
@@ -166,90 +270,13 @@ namespace CopyToUSB2._0
             {
                 button.Enabled = false;
                 cts.Cancel();
+                cts.Dispose();
+                progressBar1.Value = 0;
+                label1.Text = " > Copying of files was cancelled";
+                button.Text = "Copy";
+                button.Enabled = true;
+                cts = new CancellationTokenSource();
             }
-        }
-
-        protected override void WndProc(ref Message m)
-        {
-            base.WndProc(ref m);
-            switch (m.Msg)
-            {
-                case WM_DEVICECHANGE:
-                    switch ((int)m.WParam)
-                    {
-                        case DBT_DEVICEARRIVAL:
-                            int devType = Marshal.ReadInt32(m.LParam, 4);
-                            if (devType == DBT_DEVTYP_VOLUME)
-                            {
-                                DevBroadcastVolume vol;
-                                vol = (DevBroadcastVolume)Marshal.PtrToStructure(m.LParam, typeof(DevBroadcastVolume));
-                                int mask = vol.Mask;
-                                String binaryMask = Convert.ToString(vol.Mask, 2);
-                                int str = binaryMask.Length - binaryMask.IndexOf('1') - 1;
-
-                                driveLetter = (char)('A' + str) + ":\\"; //initiallise class variable
-
-                                DriveInfo[] allDrives = DriveInfo.GetDrives();
-                                string src = Properties.Settings.Default["srcPath"].ToString().Trim();
-                                string usbLabel = Properties.Settings.Default["usbLabel"].ToString().Trim();
-                                foreach (DriveInfo d in allDrives)
-                                {
-                                    if (d.Name == driveLetter)
-                                    {
-                                        if (d.VolumeLabel == usbLabel || (d.VolumeLabel == "" && usbLabel == "Removable Disk"))
-                                        {
-                                            if (ShowInTaskbar == false)
-                                            {
-                                                ShowInTaskbar = true;
-                                                notifyIcon1.Visible = false;
-                                                WindowState = FormWindowState.Normal;
-                                                TopMost = true;
-                                                TopMost = false;
-                                            }
-                                            DeviceFlag = true;
-                                            label1.Text = " > Found a new USB Flash Drive with the required label ...";
-                                            if (Directory.Exists(src))
-                                            {
-                                                srcPath = Path.GetFullPath(src);
-                                                baseFolder = srcPath.Replace(Path.GetPathRoot(srcPath), ""); // initiallise class variable.
-                                                //Console.WriteLine(srcPath + " ~~~~ " + baseFolder);
-                                                Task<List<ListViewItem>> task = Task<List<ListViewItem>>.Factory.StartNew(() => { return Library.listAllDifferences(srcPath, baseFolder, driveLetter); });
-                                                label1.Text = " > Populating the differences b/w source and destination...";
-                                                task.ContinueWith((t) => {
-                                                    listView1.BeginUpdate();
-                                                    listView1.Items.AddRange(t.Result.ToArray());
-                                                    listView1.EndUpdate();
-                                                    label1.Text = " > Please Select the files to be copied into the USB drive...";
-                                                    button.Text = "Copy";
-                                                    button.Enabled = true;
-                                                }, TaskScheduler.FromCurrentSynchronizationContext());
-                                            }
-                                            else
-                                            {
-                                                MessageBox.Show("The Specified Source Folder Does Not Exists !!!");
-                                                break;
-                                            }
-                                        }
-                                        break;
-                                    }
-                                }
-                            }
-                            break;
-                        case DBT_DEVICEREMOVECOMPLETE:
-                            if (DeviceFlag == true)
-                            {
-                                label1.Text = " > The Device has been removed";
-                                listView1.Items.Clear();
-                                progressBar1.Value = 0;
-                                button.Enabled = false;
-                                button.Text = "Copy";
-                                DeviceFlag = false;
-                            }
-                            break;
-                    }
-                    break;
-            }
-
         }
     }
 }

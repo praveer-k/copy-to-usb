@@ -107,7 +107,6 @@
             // listView1
             // 
             this.listView1.AccessibleRole = System.Windows.Forms.AccessibleRole.ListItem;
-            this.listView1.Activation = System.Windows.Forms.ItemActivation.OneClick;
             this.listView1.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
             | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
