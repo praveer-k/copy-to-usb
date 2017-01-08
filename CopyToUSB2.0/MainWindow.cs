@@ -151,6 +151,7 @@ namespace CopyToUSB2._0
                         }
                         else
                         {
+                            cts.Dispose();
                             progressBar1.Value = 0;
                             label1.Text = " > Copying of files was cancelled";
                             button.Text = "Copy";
